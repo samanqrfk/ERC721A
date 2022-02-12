@@ -44,11 +44,6 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
     using Address for address;
     using Strings for uint256;
 
-    struct TokenOwnership {
-        address addr;
-        uint64 startTimestamp;
-    }
-
     struct AddressData {
         uint128 balance;
         uint128 numberMinted;
@@ -63,8 +58,7 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
     string private _symbol;
 
     // Mapping from token ID to ownership details
-    // An empty struct value does not necessarily mean the token is unowned. See ownershipOf implementation for details.
-    mapping(uint256 => TokenOwnership) internal _ownerships;
+    mapping(uint256 => address) internal _ownerships;
 
     // Mapping owner address to address data
     mapping(address => AddressData) private _addressData;
@@ -109,9 +103,9 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
         // Counter overflow is impossible as the loop breaks when uint256 i is equal to another uint256 numMintedSoFar.
         unchecked {
             for (uint256 i; i < numMintedSoFar; i++) {
-                TokenOwnership memory ownership = _ownerships[i];
-                if (ownership.addr != address(0)) {
-                    currOwnershipAddr = ownership.addr;
+                address ownership = _ownerships[i];
+                if (ownership != address(0)) {
+                    currOwnershipAddr = ownership;
                 }
                 if (currOwnershipAddr == owner) {
                     if (tokenIdsIdx == index) {
@@ -154,13 +148,13 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
      * Gas spent here starts off proportional to the maximum mint batch size.
      * It gradually moves to O(1) as tokens get transferred around in the collection over time.
      */
-    function ownershipOf(uint256 tokenId) internal view returns (TokenOwnership memory) {
+    function ownershipOf(uint256 tokenId) internal view returns (address) {
         if (!_exists(tokenId)) revert OwnerQueryForNonexistentToken();
 
         unchecked {
             for (uint256 curr = tokenId;; curr--) {
-                TokenOwnership memory ownership = _ownerships[curr];
-                if (ownership.addr != address(0)) {
+                address ownership = _ownerships[curr];
+                if (ownership != address(0)) {
                     return ownership;
                 }
             }
@@ -171,7 +165,7 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
      * @dev See {IERC721-ownerOf}.
      */
     function ownerOf(uint256 tokenId) public view override returns (address) {
-        return ownershipOf(tokenId).addr;
+        return ownershipOf(tokenId);
     }
 
     /**
@@ -342,8 +336,7 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
             _addressData[to].balance += uint128(quantity);
             _addressData[to].numberMinted += uint128(quantity);
 
-            _ownerships[startTokenId].addr = to;
-            _ownerships[startTokenId].startTimestamp = uint64(block.timestamp);
+            _ownerships[startTokenId] = to;
 
             uint256 updatedIndex = startTokenId;
 
@@ -377,20 +370,20 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
         address to,
         uint256 tokenId
     ) private {
-        TokenOwnership memory prevOwnership = ownershipOf(tokenId);
+        address prevOwnership = ownershipOf(tokenId);
 
-        bool isApprovedOrOwner = (_msgSender() == prevOwnership.addr ||
+        bool isApprovedOrOwner = (_msgSender() == prevOwnership ||
             getApproved(tokenId) == _msgSender() ||
-            isApprovedForAll(prevOwnership.addr, _msgSender()));
+            isApprovedForAll(prevOwnership, _msgSender()));
 
         if (!isApprovedOrOwner) revert TransferCallerNotOwnerNorApproved();
-        if (prevOwnership.addr != from) revert TransferFromIncorrectOwner();
+        if (prevOwnership != from) revert TransferFromIncorrectOwner();
         if (to == address(0)) revert TransferToZeroAddress();
 
         _beforeTokenTransfers(from, to, tokenId, 1);
 
         // Clear approvals from the previous owner
-        _approve(address(0), tokenId, prevOwnership.addr);
+        _approve(address(0), tokenId, prevOwnership);
 
         // Underflow of the sender's balance is impossible because we check for
         // ownership above and the recipient's balance can't realistically overflow.
@@ -399,16 +392,14 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata, IERC721Enumerable
             _addressData[from].balance -= 1;
             _addressData[to].balance += 1;
 
-            _ownerships[tokenId].addr = to;
-            _ownerships[tokenId].startTimestamp = uint64(block.timestamp);
+            _ownerships[tokenId] = to;
 
             // If the ownership slot of tokenId+1 is not explicitly set, that means the transfer initiator owns it.
             // Set the slot of tokenId+1 explicitly in storage to maintain correctness for ownerOf(tokenId+1) calls.
             uint256 nextTokenId = tokenId + 1;
-            if (_ownerships[nextTokenId].addr == address(0)) {
+            if (_ownerships[nextTokenId] == address(0)) {
                 if (_exists(nextTokenId)) {
-                    _ownerships[nextTokenId].addr = prevOwnership.addr;
-                    _ownerships[nextTokenId].startTimestamp = prevOwnership.startTimestamp;
+                    _ownerships[nextTokenId] = prevOwnership;
                 }
             }
         }
